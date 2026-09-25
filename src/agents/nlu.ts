@@ -1,4 +1,5 @@
 import type { Agent, AgentContext } from "../agent.js";
+import { FatalAgentError } from "../agent.js";
 import { generarTexto, hayLlm } from "../llm.js";
 import { horaASeg } from "../util.js";
 import type { ConsultaNormalizada } from "../types.js";
@@ -32,7 +33,7 @@ export class NluAgent implements Agent {
     } else if (libre) {
       consulta = await this.parseLibre(libre);
     } else {
-      throw new Error(
+      throw new FatalAgentError(
         "Sin consulta: usa --origen/--destino o un texto libre con --texto.",
       );
     }
@@ -89,7 +90,7 @@ export class NluAgent implements Agent {
         tiempoMin: tiempoMin ?? 30,
       };
     }
-    throw new Error(
+    throw new FatalAgentError(
       `No pude interpretar el texto libre: "${texto}". Usa la forma "de ORIGEN a DESTINO en N min".`,
     );
   }

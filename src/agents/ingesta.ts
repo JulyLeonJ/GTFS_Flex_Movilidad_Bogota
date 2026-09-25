@@ -1,6 +1,12 @@
 import type { SegmentBus } from "../segmentos.js";
 import type { Reporte } from "../confianza.js";
 import { normalizar } from "../relevancia.js";
+import {
+  INCIDENTE_FUERTE,
+  AFECTACION,
+  FLUIDEZ,
+  FLUIDEZ_CLARA,
+} from "../vocabulario.js";
 
 // Agente de Ingesta: escucha la API de WhatsApp y traduce mensajes asíncronos
 // ("Hay un bloqueo en la vía X") a reportes estructurados, que luego "grita"
@@ -13,15 +19,23 @@ export interface FuenteReputacion {
 }
 
 export const REPUTACIONES_DEFECTO: FuenteReputacion[] = [
+  { id: "telegram", peso: 0.2, descripcion: "Reporte de Telegram (canal informal, no verificado)" },
   { id: "whatsapp_anonimo", peso: 0.2, descripcion: "WhatsApp anónimo (primera vez)" },
   { id: "usuario_frecuente", peso: 0.5, descripcion: "Usuario frecuente" },
   { id: "validador_comunitario", peso: 0.7, descripcion: "Validador de emisora comunitaria" },
   { id: "conductor_red", peso: 1.0, descripcion: "Conductor red incentivada (ETB/Rappi)" },
 ];
 
-const NEGATIVO_FUERTE = ["bloqueo", "accidente", "cerrado", "cierre", "derrumb", "caida de arbol", "arbol caido", "derrumbado"];
-const NEGATIVO = ["trancon", "demora", "demorado", "lento", "parado", "no pasa", "desvio", "restringido"];
-const POSITIVO = ["fluido", "todo bien", "normal", "paso", "salio", "andando", "sin novedad", "operando"];
+// Peso/reputación (0..1) de una fuente por su id. Desconocida → 0.2.
+export function pesoDeFuente(fuente: string): number {
+  return REPUTACIONES_DEFECTO.find((r) => r.id === fuente)?.peso ?? 0.2;
+}
+
+const NEGATIVO_FUERTE = INCIDENTE_FUERTE;
+const NEGATIVO = AFECTACION;
+const POSITIVO = FLUIDEZ;
+// Señales positivas no ambiguas para clasificar un mensaje como reporte.
+const POSITIVO_CLARO = FLUIDEZ_CLARA;
 
 export interface Traduccion {
   segmento: string;
@@ -83,5 +97,24 @@ export class IngestionAgent {
       if (t.includes(normalizar(s.id))) return s.id;
     }
     return null;
+  }
+
+  // ¿El texto es un reporte (estado de un tramo informal) y no una consulta?
+  // Requiere una señal de estado (positiva o negativa), aunque NO mencione un
+  // tramo conocido. No tiene efectos secundarios (solo clasifica).
+  esReporte(texto: string): boolean {
+    const t = normalizar(texto);
+    return (
+      NEGATIVO_FUERTE.some((k) => t.includes(k)) ||
+      NEGATIVO.some((k) => t.includes(k)) ||
+      POSITIVO_CLARO.some((k) => t.includes(k))
+    );
+  }
+
+  // ¿Es un incidente grave (bloqueo/accidente/derrumbe/…)? Estas señales son
+  // tan inequívocas que ganan sobre la estructura de ruta en la clasificación.
+  esIncidenteFuerte(texto: string): boolean {
+    const t = normalizar(texto);
+    return NEGATIVO_FUERTE.some((k) => t.includes(k));
   }
 }

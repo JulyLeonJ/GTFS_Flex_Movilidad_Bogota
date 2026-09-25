@@ -206,6 +206,20 @@ npm run telegram
 npm run typecheck
 ```
 
+En Telegram, cada mensaje (texto o nota de voz transcrita) se clasifica
+automáticamente (`src/telegram.ts` → `manejarTexto`):
+
+1. Incidente grave (bloqueo/accidente/derrumbe/…) → **reporte**.
+2. Estructura de ruta (`de X a Y`) → **consulta** de ruta.
+3. Señal de estado (demora, lento, fluido, todo bien, …) → **reporte**.
+4. En otro caso → se intenta como **consulta** (si no es una ruta válida, el NLU
+   devuelve un mensaje claro sin ejecutar el resto del pipeline).
+
+Los reportes se ingieren al subsistema informal/oficial y se apendan a
+`data/reportes.csv`; si el lugar aún no está mapeado a un tramo o zona, se
+guarda igualmente con `segmento` vacío. También puede forzarse un reporte con
+`/reporte <descripción>`.
+
 > **Importante**: `.env.example` es solo la plantilla (se versiona); los valores
 > reales van en `.env` (ignorado por git), que carga `cargarDotenv()`
 > (`src/dotenv.ts`).
@@ -230,6 +244,23 @@ de opciones/datasets, junto con los modelos de LLM y STT usados. Es la base
 para integrar un motor de base de datos más adelante (análisis, histórico,
 reentrenamiento del modelo de confianza). La ruta se configura con
 `CONSULTAS_CSV`.
+
+Los **reportes de transporte informal** que llegan por Telegram (comando
+`/reporte <descripción>`) se apendan a `data/reportes.csv`
+(`src/reporte-log.ts`) con su `nivel` (`informal`/`oficial`) y `fiabilidad`
+(0..1). Los reportes de canales informales (Telegram, peso `0.2`) tienen **menor
+fiabilidad** que los validados/oficiales (`validador_comunitario` 0.7,
+`conductor_red` 1.0), por lo que pesan menos en el cálculo de `C(t)`. La ruta se
+configura con `REPORTES_CSV`.
+
+Los reportes se **rehidratan al arrancar** (`src/recomendador.ts` →
+`rehidratar()`): se lee `data/reportes.csv` y se re-ingieren los reportes
+recientes (`REPORTES_TTL_HORAS`, por defecto 24 h) para que sigan afectando el
+enrutamiento tras un reinicio. Si un reporte negativo no cae en un tramo ni en
+una zona predefinida, se intenta **geolocalizar** (`src/ingesta-reportes.ts`,
+IDECA/Nominatim + LLM opcional) y se registra como incidente puntual. Antes de la
+síntesis, el agente `reportes_verificacion` cruza la ruta contra los reportes
+activos y refleja los motivos en la explicación.
 
 ## Extender
 

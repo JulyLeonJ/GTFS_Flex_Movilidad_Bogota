@@ -6,12 +6,15 @@ import { CkanAgent } from "./agents/ckan.js";
 import { SocrataAgent } from "./agents/socrata.js";
 import { TransitAgent } from "./agents/transit.js";
 import { InformalAgent } from "./agents/informal.js";
+import { VerificacionReportesAgent } from "./agents/verificacion-reportes.js";
 import { ConocimientoComunitarioAgent } from "./agents/conocimiento-comunitario.js";
 import { SynthesizerAgent } from "./agents/synth.js";
 import { InformalService } from "./informal.js";
 import { IncidentesService } from "./incidentes.js";
 import { minutosATexto, segAHora } from "./util.js";
 import { registrarConsulta } from "./consulta-log.js";
+import { leerReportes } from "./reporte-log.js";
+import { ingestarReporte } from "./ingesta-reportes.js";
 import { nombreModeloLlm } from "./llm.js";
 import { nombreModeloStt } from "./stt.js";
 import type { ResultadoRecomendacion } from "./types.js";
@@ -31,6 +34,11 @@ export interface Recomendacion {
   geocode?: GeocodeInfo;
   csvRuta: string;
 }
+
+// Ventana de rehidratación: al arrancar se re-ingieren los reportes del CSV con
+// esta antigüedad máxima (configurable con REPORTES_TTL_HORAS). Aunque el TTL sea
+// amplio, el decaimiento temporal de C(t)/incidentes los atenúa con los días.
+const REPORTES_TTL_HORAS = Number(process.env.REPORTES_TTL_HORAS ?? 24) || 24;
 
 export class Recomendador {
   readonly informal: InformalService;
@@ -62,6 +70,7 @@ export class Recomendador {
     orch.stage(new GeocoderAgent(), new CkanAgent(), new SocrataAgent());
     orch.stage(new TransitAgent(this.incidentes));
     orch.stage(new InformalAgent(this.informal));
+    orch.stage(new VerificacionReportesAgent(this.incidentes, this.informal));
     orch.stage(new ConocimientoComunitarioAgent());
     orch.stage(new SynthesizerAgent());
     return orch;
@@ -95,6 +104,39 @@ export class Recomendador {
     logger: (m: string) => void = () => {},
   ): Promise<Recomendacion> {
     return this.ejecutar({ textoLibre: texto, motivos: [] }, logger);
+  }
+
+  // Rehidrata la base de conocimiento de reportes: lee data/reportes.csv y
+  // re-ingiere los reportes recientes para que sigan afectando el enrutamiento
+  // (confianza C(t) y/o incidentes) después de un reinicio.
+  async rehidratar(logger: (m: string) => void = () => {}): Promise<void> {
+    const ttlMs = REPORTES_TTL_HORAS * 3_600_000;
+    const ahora = Date.now();
+    let reingestados = 0;
+
+    for (const r of leerReportes()) {
+      const ts = Date.parse(r.timestamp);
+      if (!Number.isFinite(ts) || ahora - ts > ttlMs) continue;
+
+      await ingestarReporte(
+        r.texto,
+        r.fuente || "telegram",
+        this.informal,
+        this.incidentes,
+        ts,
+        logger,
+        r.lat !== undefined && r.lon !== undefined
+          ? { lat: r.lat, lon: r.lon, nombre: r.segmento.replace(/^punto:/, "") }
+          : undefined,
+      );
+      reingestados++;
+    }
+
+    if (reingestados > 0) {
+      logger(
+        `base de conocimiento: ${reingestados} reporte(s) rehidratado(s) desde CSV`,
+      );
+    }
   }
 
   private registrar(resultado: ResultadoRecomendacion): string {

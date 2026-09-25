@@ -13,6 +13,16 @@ export interface Agent {
   run(ctx: AgentContext): Promise<void>;
 }
 
+// Error fatal: aborta el pipeline completo. Se usa cuando un agente determina
+// que no tiene sentido seguir (p. ej. el NLU no pudo interpretar la consulta):
+// en lugar de arrastrar errores en cascada, se detiene con un mensaje claro.
+export class FatalAgentError extends Error {
+  constructor(msg: string) {
+    super(msg);
+    this.name = "FatalAgentError";
+  }
+}
+
 export class Orchestrator {
   private stages: Agent[][] = [];
 
@@ -50,6 +60,10 @@ export class Orchestrator {
       ctx.log(`✔ [${agent.name}] ok (${Date.now() - t0} ms)`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof FatalAgentError) {
+        ctx.log(`✖ [${agent.name}] error fatal: ${msg}`);
+        throw err;
+      }
       ctx.log(`✖ [${agent.name}] error: ${msg}`);
       ctx.state[`__error_${agent.name}`] = msg;
     }

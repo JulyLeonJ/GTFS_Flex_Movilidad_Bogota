@@ -1,0 +1,7 @@
+timestamp,canal,fuente,nivel,fiabilidad,segmento,valor,texto
+2026-09-25T07:05:34.351Z,telegram,telegram,informal,0.2,,-2,"Hola, acabo de ver un accidente en frente del centro comercial El Ensueño."
+2026-09-25T07:11:38.895Z,telegram,telegram,informal,0.2,,-2,Reportó un accidente al frente del Centro Comercial El Ensueño.
+2026-09-25T07:12:23.383Z,telegram,telegram,informal,0.2,,-2,Reportó un accidente al frente del centro comercial Gran Plaza del Ensueño.
+2026-09-25T07:20:53.600Z,telegram,telegram,informal,0.2,av-villavicencio,-2,"Reporto bloqueo de la avenida Villavicencio a la altura de la Universidad Distrital, están echando piedra, no se puede pasar, está cerrado."
+2026-09-25T07:22:10.383Z,telegram,telegram,informal,0.2,av-villavicencio,-2,"Reporto una protesta en frente de la Universidad Distrital por Avenida Villavicencio, están tirando piedra, está cerrado, está bloqueado, no se puede pasar."
+2026-09-25T07:37:18.609Z,telegram,telegram,informal,0.2,punto:Universidad Distrital Francisco José de Caldas,-2,4.621948750000001,-74.06844044899998,"Reporto accidente en frente de la Universidad Distrital, el paso está completamente cerrado."

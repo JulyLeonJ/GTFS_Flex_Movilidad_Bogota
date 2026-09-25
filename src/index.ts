@@ -41,6 +41,9 @@ async function main(): Promise<void> {
   // con decaimiento) y se comparte con la ingesta de reportes de voz.
   const recomendador = new Recomendador();
 
+  // Rehidrata reportes recientes desde la base de conocimiento (CSV).
+  await recomendador.rehidratar(logger);
+
   // Motivos de desvío (reportes negativos) para comunicar al usuario.
   const motivos: string[] = [];
   const ahoraMs = Date.now();

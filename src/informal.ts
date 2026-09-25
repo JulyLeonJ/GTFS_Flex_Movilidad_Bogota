@@ -49,6 +49,22 @@ export class InformalService {
     return this.ingesta.procesarMensaje(texto, fuente, timestamp);
   }
 
+  // Clasifica (sin efectos secundarios) si el texto es un reporte de un tramo
+  // informal (estado de vía) y no una consulta de ruta.
+  esReporte(texto: string): boolean {
+    return this.ingesta.esReporte(texto);
+  }
+
+  // Incidente grave (bloqueo/accidente/…) que gana sobre la estructura de ruta.
+  esIncidenteFuerte(texto: string): boolean {
+    return this.ingesta.esIncidenteFuerte(texto);
+  }
+
+  // Polaridad del texto (+1 fluido, -1.5 demora, -2 bloqueo, 0.5 por defecto).
+  polaridad(texto: string): number {
+    return this.ingesta.polaridad(texto);
+  }
+
   ingestaDeVoz(audio: AudioInput, fuente: string, timestamp?: number): Promise<Reporte | null> {
     return this.transcripcion.recibirNotaDeVoz(audio, fuente, timestamp);
   }

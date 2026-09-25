@@ -1,6 +1,7 @@
 import { haversine } from "./util.js";
 import { normalizar } from "./relevancia.js";
 import { REPUTACIONES_DEFECTO } from "./agents/ingesta.js";
+import { INCIDENTE_FUERTE, AFECTACION } from "./vocabulario.js";
 
 // Incidentes sobre la red OFICIAL (SITP/TransMilenio). Un reporte negativo de
 // vía ("accidente en Casalinda", "bloqueo en la Boyacá") se geolocaliza contra
@@ -58,26 +59,8 @@ export interface IncidenteOficial {
 
 const VIDA_MEDIA_SEG = 30 * 60; // el incidente "sana" a los ~30 min sin reportes
 
-const NEGATIVO_FUERTE = [
-  "bloqueo",
-  "accidente",
-  "cerrado",
-  "cierre",
-  "derrumb",
-  "caida de arbol",
-  "arbol caido",
-  "derrumbado",
-];
-const NEGATIVO = [
-  "trancon",
-  "demora",
-  "demorado",
-  "lento",
-  "parado",
-  "no pasa",
-  "desvio",
-  "restringido",
-];
+const NEGATIVO_FUERTE = INCIDENTE_FUERTE;
+const NEGATIVO = AFECTACION;
 
 export function identificarZona(texto: string): ZonaOficial | null {
   const t = normalizar(texto);
@@ -88,13 +71,13 @@ export function identificarZona(texto: string): ZonaOficial | null {
 }
 
 // Descripción corta del tipo de incidente a partir del reporte.
-function descripcion(texto: string): string {
+export function descripcion(texto: string): string {
   const t = normalizar(texto);
-  if (/accidente/.test(t)) return "accidente";
+  if (/accidente|choque|choc|colision|siniestro/.test(t)) return "accidente";
   if (/bloqueo/.test(t)) return "bloqueo";
   if (/derrumb|caida de arbol|arbol caido/.test(t)) return "derrumbe";
   if (/cierre|cerrado/.test(t)) return "cierre";
-  if (/trancon|demora|lento|parado/.test(t)) return "tráfico lento";
+  if (/trancon|demora|lento|parado|congestion|embotellamiento/.test(t)) return "tráfico lento";
   return "incidente de vía";
 }
 
@@ -126,6 +109,34 @@ export class IncidentesService {
       severidad,
       peso,
       timestamp,
+    };
+    this.registrar(inc);
+    return inc;
+  }
+
+  // Registra un incidente geolocalizado en un punto arbitrario (no una zona
+  // predefinida). Se usa para reportes cuya ubicación se resolvió por geocodificación.
+  registrarPunto(
+    p: {
+      nombre: string;
+      lat: number;
+      lon: number;
+      radioM: number;
+      severidad: number;
+      peso: number;
+      timestamp: number;
+      texto: string;
+    },
+  ): IncidenteOficial {
+    const inc: IncidenteOficial = {
+      zonaId: `punto:${p.nombre}`,
+      motivo: `${descripcion(p.texto)} en ${p.nombre}`,
+      lat: p.lat,
+      lon: p.lon,
+      radioM: p.radioM,
+      severidad: p.severidad,
+      peso: p.peso,
+      timestamp: p.timestamp,
     };
     this.registrar(inc);
     return inc;
