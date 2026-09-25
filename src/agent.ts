@@ -46,7 +46,11 @@ export class Orchestrator {
         await this.ejecutar(stage[0], ctx);
       } else {
         logger(`▸ ejecutando ${stage.length} agentes en paralelo`);
-        await Promise.allSettled(stage.map((a) => this.ejecutar(a, ctx)));
+        const resultados = await Promise.allSettled(stage.map((a) => this.ejecutar(a, ctx)));
+        const fatal = resultados.find(
+          (r): r is PromiseRejectedResult => r.status === "rejected" && r.reason instanceof FatalAgentError,
+        );
+        if (fatal) throw fatal.reason;
       }
     }
     return ctx.state;

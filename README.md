@@ -201,15 +201,18 @@ npm run flex:demo
 # Transcribir una nota de voz real (con GROQ_API_KEY)
 npx tsx src/flex-demo.ts --audio data/audio/mi-nota.ogg
 
-# Atender consultas por chat de Telegram (texto o nota de voz)
-npm run telegram
+# Servidor: API HTTP+SSE para el mapa, bot de Telegram (si hay token) y REPL
+npm run server        # "npm run telegram" es alias del mismo comando
+
+# Autochequeo determinista (sin red, sin LLM)
+npm run verificar
 
 # Verificar tipos
 npm run typecheck
 ```
 
-En Telegram, cada mensaje (texto o nota de voz transcrita) se clasifica
-automáticamente (`src/telegram.ts` → `manejarTexto`):
+Cada mensaje (texto o nota de voz transcrita), venga de Telegram o de la
+consola, se clasifica automáticamente (`src/conversacion.ts` → `manejarMensaje`):
 
 1. Incidente grave (bloqueo/accidente/derrumbe/…) → **reporte**.
 2. Estructura de ruta (`de X a Y`) → **consulta** de ruta.
@@ -236,6 +239,32 @@ Por defecto el grafo oficial se recorta a **Ciudad Bolívar** (límites IDECA,
 El GTFS oficial (66 MB) se descubre desde el hub de TransMilenio y se cachea con
 `npm run gtfs:sync`; `stop_times.txt` se lee en streaming. Si no hay feed oficial
 ni caché, se usa `data/sample_gtfs/` (muestra).
+
+## Mapa en vivo
+
+`npm run server` levanta la API HTTP+SSE (solo `127.0.0.1`), el bot de Telegram
+(si hay `TELEGRAM_BOT_TOKEN`) y una consola REPL. Cada chat (Telegram por
+`chatId`, o la consola con la sesión fija `consola:local`) tiene una **sesión**
+con `id` opaco: la primera ruta recomendada trae un enlace
+`http://localhost:5173/?s=<id>` (`FRONTEND_URL`) que abre `cd frontend && npm
+run dev` y se actualiza solo —sin recargar— cada vez que esa conversación pide
+otra ruta o llega un reporte que cambia la congestión (SSE, sin polling). El
+comando/mensaje `/mapa` reenvía el enlace de la sesión actual. Las sesiones se
+respaldan en `SESIONES_JSON` (por defecto `data/sesiones.json`, gitignored) y
+sobreviven a un reinicio durante `TTL_DIAS` (7 días).
+
+Las geometrías que dibuja el mapa salen de fuentes públicas ya consumidas por
+el backend: los tramos troncales/zonales/alimentadores/duales y TransMiCable se
+recortan de `shapes.txt` del GTFS oficial del SITP (`subsistema` según
+`agency.txt`); sin `shape_id` se cae a una recta parada-a-parada; los tramos
+informales salen del feed GTFS-Flex (`FLEX_PATH`); las zonas de congestión son
+círculos sobre `ZONAS_OFICIALES` o el trazado del segmento Flex reportado.
+
+Variables nuevas (ver `.env.example`): `API_PORT` (8787), `FRONTEND_URL`
+(`http://localhost:5173`), `CONGESTION_UMBRAL` (0.5) y `SESIONES_JSON`. Para
+abrir el enlace desde el celular, `localhost` no es accesible: usa la misma
+Wi-Fi (`npm run dev -- --host` + `FRONTEND_URL=http://<IP-LAN>:5173`) o un
+túnel (`cloudflared tunnel --url http://localhost:5173`).
 
 ## Base de conocimiento (CSV)
 
@@ -289,10 +318,16 @@ src/
   relevancia.ts     # filtro de relevancia Bogotá (catálogos)
   confianza.ts      # decaimiento temporal/espatial (GTFS-Flex)
   incidentes.ts     # incidentes sobre la red oficial (zonas + penalización)
+  congestion.ts     # nivel de trancamiento por zona (noisy-OR) + GeoJSON
   flex.ts           # parser GTFS-Flex (paradas continuas, grupos)
   segmentos.ts      # SegmentAgent + bus asíncrono
   informal.ts       # InformalService (puente informal ↔ pipeline)
   flex-demo.ts      # CLI `npm run flex:demo`
+  sesiones.ts       # SesionesService (chat ↔ mapa, respaldo JSON)
+  conversacion.ts   # manejarMensaje/procesarReporte (Telegram + consola)
+  server.ts         # API HTTP+SSE (`npm run server`)
+  consola.ts        # REPL de consola (mismo flujo que Telegram)
+  verificar.ts      # autochequeo determinista (`npm run verificar`)
   util.ts           # haversine, fetch, formato
   types.ts          # contratos compartidos
   index.ts          # CLI y orquestación (híbrida)
@@ -303,6 +338,7 @@ src/
     socrata.ts      # datos.gov.co (Socrata)
     transit.ts      # enrutador oficial (RAPTOR multi-transbordo)
     informal.ts     # integra opciones informales (C(t))
+    congestion.ts   # excluye/reordena rutas por zonas con trancón
     conocimiento-comunitario.ts # último recurso: rutas históricas (LLM)
     synth.ts        # síntesis / recomendación
     ingesta.ts      # ingesta WhatsApp → reportes

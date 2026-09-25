@@ -51,6 +51,21 @@ export interface RutaGTFS {
   color?: string;
 }
 
+// [lon, lat]: orden GeoJSON/Mapbox. OJO: Punto es {lat, lon}; no mezclarlos.
+export type Coord = [number, number];
+
+export type Subsistema = "troncal" | "alimentador" | "dual" | "zonal" | "cable";
+
+// Geometría de un tramo de la opción, en orden de viaje, lista para dibujar.
+export interface TramoGeo {
+  modo: "caminata" | "oficial" | "informal" | "comunitaria";
+  etiqueta: string;
+  subsistema?: Subsistema;
+  color?: string; // "#rrggbb"
+  coords: Coord[];
+  geometria: "shape" | "paradas" | "flex" | "recta";
+}
+
 export interface OpcionRuta {
   tipo: "directa" | "transbordo";
   resumen: string;
@@ -66,6 +81,10 @@ export interface OpcionRuta {
   fuente?: "oficial" | "informal" | "comunitaria";
   // Confianza 0..1. Oficial = 1 por defecto; informal = C(t) por decaimiento.
   confianza?: number;
+  // Geometría para el mapa (en orden de viaje). Ausente si no hubo coordenadas.
+  tramos?: TramoGeo[];
+  // Nivel máximo de trancamiento (0..1) de las zonas que cruza (CongestionAgent).
+  congestion?: number;
 }
 
 export interface ResultadoRecomendacion {
@@ -73,4 +92,5 @@ export interface ResultadoRecomendacion {
   opciones: OpcionRuta[];
   datasets: ConjuntoDatos[];
   explicacion: string;
+  motivos?: string[];
 }

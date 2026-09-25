@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { Agent, AgentContext } from "../agent.js";
 import {
   bboxPorDefecto,
+  cortarShape,
   detectGtfsSource,
   type Gtfs,
   type GtfsRoute,
@@ -17,7 +18,10 @@ import {
 } from "../gtfs-source.js";
 import { haversine, segAHora } from "../util.js";
 import { IncidentesService } from "../incidentes.js";
-import type { ConsultaNormalizada, OpcionRuta } from "../types.js";
+import type { ConsultaNormalizada, Coord, OpcionRuta, Punto, TramoGeo } from "../types.js";
+
+// ponytail: una sola entrada de caché; se invalida si cambia la fuente/bbox.
+let cache: { clave: string; gtfs: Gtfs; fuente: string } | null = null;
 
 const WALK_SPEED_MS = 1.3;
 const MAX_WALK_M = 800;
@@ -69,6 +73,7 @@ export class TransitAgent implements Agent {
   private tripImpacto: number[] = []; // viaje -> impacto agregado 0..1 (confianza)
   private tripImpactoRuta: number[] = []; // viaje -> impacto de ruta (severidad, desvío)
   private viajesEscaneados = new Set<number>(); // viajes alcanzados por RAPTOR en la consulta
+  private puntos: { o?: Punto; d?: Punto } = {};
 
   constructor(private incidentes: IncidentesService = new IncidentesService()) {}
 
@@ -99,6 +104,7 @@ export class TransitAgent implements Agent {
       return;
     }
 
+    this.puntos = { o: consulta.origenPunto, d: consulta.destinoPunto };
     const opciones = this.enrutar(origen, destino, salidaSeg);
     ctx.state.opciones = opciones;
     ctx.state.incidentesEnRuta = this.motivosDeRuta();
@@ -110,6 +116,18 @@ export class TransitAgent implements Agent {
     let fuente: string;
 
     const bbox = bboxPorDefecto();
+    const clave = JSON.stringify({
+      gtfsPath: process.env.GTFS_PATH ?? "",
+      bbox,
+      cache: existsSync(cacheZip()),
+    });
+    if (cache?.clave === clave) {
+      this.gtfs = cache.gtfs;
+      ctx.state.gtfsFuente = cache.fuente;
+      ctx.log(`GTFS en caché: ${this.gtfs.stops.length} paradas, ${this.gtfs.routes.length} rutas (${cache.fuente})`);
+      return;
+    }
+
     const fromEnv = process.env.GTFS_PATH?.trim();
     if (fromEnv) {
       if (/^https?:\/\//.test(fromEnv)) {
@@ -141,6 +159,7 @@ export class TransitAgent implements Agent {
     ctx.log(
       `GTFS listo: ${this.gtfs.stops.length} paradas, ${this.gtfs.routes.length} rutas (${fuente})`,
     );
+    cache = { clave, gtfs: this.gtfs, fuente };
   }
 
   private sampleDir(): string {
@@ -219,9 +238,7 @@ export class TransitAgent implements Agent {
     destino: Candidata[],
     salidaSeg?: number,
   ): RaptorResult {
-    // Sin hora de salida: se asume "lo antes posible" (primer servicio del día).
-    const startSec =
-      salidaSeg !== undefined ? salidaSeg : this.tiempoSalida(origen);
+    const startSec = salidaSeg ?? this.salidaPorDefecto(origen);
     const labels = new Map<number, Label[]>();
     for (const o of origen) {
       labels.set(o.idx, [{ arr: startSec, trip: -1, boardStop: -1, parent: null }]);
@@ -247,6 +264,14 @@ export class TransitAgent implements Agent {
     }
 
     return { startSec, labels };
+  }
+
+  // Sin hora pedida: ahora en Bogotá (UTC-5, sin horario de verano); fuera del
+  // horario SITP, el primer servicio del día.
+  private salidaPorDefecto(origen: Candidata[]): number {
+    const ahora = Math.floor(Date.now() / 1000 - 5 * 3600) % 86400;
+    const sv = this.servicioGlobal();
+    return ahora >= sv.start && ahora <= sv.end ? ahora : this.tiempoSalida(origen);
   }
 
   // Primer momento en el que se puede abordar un vehículo en las paradas origen.
@@ -449,6 +474,27 @@ export class TransitAgent implements Agent {
     return { origenIdx: cur, tramos };
   }
 
+  // Coordenadas del tramo: recorte del shape oficial si existe y corresponde;
+  // si no, secuencia de paradas del viaje entre abordaje y bajada.
+  private geoTramo(tr: Tramo): Pick<TramoGeo, "coords" | "geometria"> {
+    const a = this.gtfs.stops[tr.from];
+    const b = this.gtfs.stops[tr.to];
+    const shape = this.gtfs.shapes.get(this.gtfs.tripShape[tr.trip]);
+    const corte = shape ? cortarShape(shape, a, b) : null;
+    if (corte) return { coords: corte, geometria: "shape" };
+
+    const coords: Coord[] = [];
+    let dentro = false;
+    for (let p = this.gtfs.tripStart[tr.trip]; p < this.gtfs.tripStart[tr.trip + 1]; p++) {
+      const s = this.gtfs.seqStop[p];
+      if (s === tr.from) dentro = true;
+      if (!dentro) continue;
+      coords.push([this.gtfs.stops[s].lon, this.gtfs.stops[s].lat]);
+      if (s === tr.to) break;
+    }
+    return { coords, geometria: "paradas" };
+  }
+
   private agregarOpcion(
     startSec: number,
     arrSec: number,
@@ -505,6 +551,32 @@ export class TransitAgent implements Agent {
     }
     const confianza = maxImpacto > 0 ? Math.max(0, 1 - maxImpacto) : 1;
 
+    const tramosGeo: TramoGeo[] = [];
+    const caminar = (desde: Punto | undefined, hasta: Punto | undefined) => {
+      if (desde && hasta && haversine(desde, hasta) >= 10)
+        tramosGeo.push({
+          modo: "caminata",
+          etiqueta: "Caminar",
+          geometria: "recta",
+          coords: [[desde.lon, desde.lat], [hasta.lon, hasta.lat]],
+        });
+    };
+    caminar(this.puntos.o, { lat: o.stop.lat, lon: o.stop.lon });
+    for (const tr of tramos) {
+      const rid = this.gtfs.tripRoute[tr.trip];
+      const ruta = this.gtfs.routeById.get(rid);
+      const geo = this.geoTramo(tr);
+      if (geo.coords.length < 2) continue;
+      tramosGeo.push({
+        modo: "oficial",
+        etiqueta: routeLabel(ruta, rid),
+        subsistema: ruta?.subsistema,
+        color: ruta?.color ? `#${ruta.color}` : undefined,
+        ...geo,
+      });
+    }
+    caminar({ lat: d.stop.lat, lon: d.stop.lon }, this.puntos.d);
+
     out.push({
       tipo,
       resumen,
@@ -517,6 +589,7 @@ export class TransitAgent implements Agent {
       puntaje: (1000 / (1 + tiempoEfectivo)) * confianza,
       fuente: "oficial",
       confianza,
+      tramos: tramosGeo.length ? tramosGeo : undefined,
     });
   }
 }

@@ -1,6 +1,6 @@
 import type { Agent, AgentContext } from "../agent.js";
 import { generarTexto, hayLlm } from "../llm.js";
-import type { ConsultaNormalizada, OpcionRuta } from "../types.js";
+import type { ConsultaNormalizada, OpcionRuta, TramoGeo } from "../types.js";
 
 // Agente de último recurso: cuando no hay rutas oficiales ni informales
 // recientes (por WhatsApp), usa el LLM para rastrear conocimiento comunitario
@@ -86,6 +86,12 @@ export class ConocimientoComunitarioAgent implements Agent {
     const tiempo = Math.max(5, Math.round(datos.tiempoEstimadoMin ?? 30));
     const desc = datos.descripcion!.trim();
     const nota = datos.nota?.trim() || "Conocimiento histórico no verificado en tiempo real";
+    const o = consulta.origenPunto;
+    const d = consulta.destinoPunto;
+    const tramos: TramoGeo[] | undefined =
+      o && d
+        ? [{ modo: "comunitaria", etiqueta: desc, geometria: "recta", coords: [[o.lon, o.lat], [d.lon, d.lat]] }]
+        : undefined;
     return {
       tipo: "directa",
       resumen: `Colectivo histórico (comunidad): ${desc}`,
@@ -102,6 +108,7 @@ export class ConocimientoComunitarioAgent implements Agent {
       puntaje: (1000 / (1 + tiempo)) * CONFIANZA_HISTORICA,
       fuente: "comunitaria",
       confianza: CONFIANZA_HISTORICA,
+      tramos,
     };
   }
 }

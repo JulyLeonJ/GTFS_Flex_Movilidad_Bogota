@@ -1,6 +1,7 @@
 import type { InformalService } from "./informal.js";
 import type { IncidentesService } from "./incidentes.js";
 import { geocodificar } from "./geocode.js";
+import { enArea } from "./gtfs.js";
 import { generarTexto, hayLlm } from "./llm.js";
 import { pesoDeFuente } from "./agents/ingesta.js";
 import { normalizar } from "./relevancia.js";
@@ -25,6 +26,7 @@ export interface IngestaReporte {
   lat?: number; // coordenadas si se geolocalizó a un punto
   lon?: number;
   mapeado: boolean;
+  fueraDeArea?: boolean;
 }
 
 type Log = (m: string) => void;
@@ -74,6 +76,11 @@ export async function ingestarReporte(
   const punto =
     coords ??
     (await localizarPunto(texto, log));
+
+  if (punto && !enArea(punto)) {
+    log(`fuera del área: "${punto.nombre}" (${punto.lat}, ${punto.lon})`);
+    return { segmento: "", valor, fiabilidad, lat: punto.lat, lon: punto.lon, mapeado: false, fueraDeArea: true };
+  }
 
   if (punto) {
     incidentes.registrarPunto({

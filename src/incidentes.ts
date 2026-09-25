@@ -1,4 +1,5 @@
 import { haversine } from "./util.js";
+import { vigente } from "./confianza.js";
 import { normalizar } from "./relevancia.js";
 import { REPUTACIONES_DEFECTO } from "./agents/ingesta.js";
 import { INCIDENTE_FUERTE, AFECTACION } from "./vocabulario.js";
@@ -18,6 +19,7 @@ export interface ZonaOficial {
   radioM: number;
 }
 
+// Todas las zonas deben caer dentro del área del MVP (verificado en verificar.ts).
 export const ZONAS_OFICIALES: ZonaOficial[] = [
   {
     id: "av-villavicencio",
@@ -57,7 +59,7 @@ export interface IncidenteOficial {
   timestamp: number;
 }
 
-const VIDA_MEDIA_SEG = 30 * 60; // el incidente "sana" a los ~30 min sin reportes
+export const VIDA_MEDIA_SEG = 30 * 60; // el incidente "sana" a los ~30 min sin reportes
 
 const NEGATIVO_FUERTE = INCIDENTE_FUERTE;
 const NEGATIVO = AFECTACION;
@@ -74,6 +76,7 @@ export function identificarZona(texto: string): ZonaOficial | null {
 export function descripcion(texto: string): string {
   const t = normalizar(texto);
   if (/accidente|choque|choc|colision|siniestro/.test(t)) return "accidente";
+  if (/protesta|manifestacion|disturbio/.test(t)) return "protesta";
   if (/bloqueo/.test(t)) return "bloqueo";
   if (/derrumb|caida de arbol|arbol caido/.test(t)) return "derrumbe";
   if (/cierre|cerrado/.test(t)) return "cierre";
@@ -149,14 +152,15 @@ export class IncidentesService {
     return 0;
   }
 
-  activos(): IncidenteOficial[] {
+  activos(ahora = Date.now()): IncidenteOficial[] {
+    this.incidentes = this.incidentes.filter((inc) => vigente(inc.timestamp, ahora));
     return this.incidentes;
   }
 
   // Impacto agregado (0..1) de los incidentes activos sobre un punto.
   impactoEn(lat: number, lon: number, ahora = Date.now()): number {
     let impacto = 0;
-    for (const inc of this.incidentes) {
+    for (const inc of this.activos(ahora)) {
       const d = haversine({ lat, lon }, { lat: inc.lat, lon: inc.lon });
       if (d > inc.radioM) continue;
       const edadSeg = (ahora - inc.timestamp) / 1000;
@@ -173,7 +177,7 @@ export class IncidentesService {
   // fiabilidad solo modera la CONFIANZA (impactoEn), no el desvío en sí.
   impactoDeRutaEn(lat: number, lon: number, ahora = Date.now()): number {
     let impacto = 0;
-    for (const inc of this.incidentes) {
+    for (const inc of this.activos(ahora)) {
       const d = haversine({ lat, lon }, { lat: inc.lat, lon: inc.lon });
       if (d > inc.radioM) continue;
       const edadSeg = (ahora - inc.timestamp) / 1000;

@@ -23,6 +23,17 @@ export interface Reporte {
   profundidad?: number; // saltos de propagación espacial restantes
 }
 
+// Corte duro: un reporte más viejo que esto deja de contar, aunque su
+// decaimiento exponencial aún no lo haya llevado a cero.
+export function edadMaxReporteMs(): number {
+  const h = Number(process.env.REPORTES_TTL_HORAS);
+  return (Number.isFinite(h) && h > 0 ? h : 2) * 3_600_000;
+}
+
+export function vigente(timestamp: number, ahora: number): boolean {
+  return ahora - timestamp <= edadMaxReporteMs();
+}
+
 export function clamp01(x: number): number {
   return Math.min(1, Math.max(0, x));
 }
@@ -58,30 +69,31 @@ export class ConfianzaTemporal {
     return this.reportes.length;
   }
 
+  // Reportes aún vigentes (solo lectura), para agregarlos por zona en el mapa.
+  activos(t: number = this.clock()): readonly Reporte[] {
+    return this.reportes.filter((r) => vigente(r.timestamp, t));
+  }
+
   // Confianza en el instante t (por defecto, "ahora" según el reloj inyectado).
   c(t: number = this.clock()): number {
-    const suma = this.reportes.reduce((acc, r) => {
-      const dtSeg = (t - r.timestamp) / 1000;
-      return acc + r.peso * r.valor * Math.exp(-this.lambda * dtSeg);
-    }, 0);
-    return clamp01(this.cBase + suma);
+    return clamp01(this.cBase + this.contribucion(t));
   }
 
   // Contribución neta de los reportes activos (sin C_base), para diagnóstico.
   contribucion(t: number = this.clock()): number {
-    return this.reportes.reduce((acc, r) => {
+    return this.activos(t).reduce((acc, r) => {
       const dtSeg = (t - r.timestamp) / 1000;
       return acc + r.peso * r.valor * Math.exp(-this.lambda * dtSeg);
     }, 0);
   }
 
-  // Reloj interno: purga reportes cuya influencia ya cayó bajo un umbral.
-  // Devuelve cuántos reportes expiraron.
+  // Reloj interno: purga reportes vencidos o cuya influencia ya cayó bajo un
+  // umbral. Devuelve cuántos reportes expiraron.
   purgar(t: number = this.clock(), umbral = 0.005): number {
     const antes = this.reportes.length;
     this.reportes = this.reportes.filter((r) => {
       const dtSeg = (t - r.timestamp) / 1000;
-      return Math.abs(r.peso * r.valor) * Math.exp(-this.lambda * dtSeg) >= umbral;
+      return vigente(r.timestamp, t) && Math.abs(r.peso * r.valor) * Math.exp(-this.lambda * dtSeg) >= umbral;
     });
     return antes - this.reportes.length;
   }

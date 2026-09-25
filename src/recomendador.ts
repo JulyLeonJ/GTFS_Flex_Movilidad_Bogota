@@ -6,18 +6,20 @@ import { CkanAgent } from "./agents/ckan.js";
 import { SocrataAgent } from "./agents/socrata.js";
 import { TransitAgent } from "./agents/transit.js";
 import { InformalAgent } from "./agents/informal.js";
+import { CongestionAgent } from "./agents/congestion.js";
 import { VerificacionReportesAgent } from "./agents/verificacion-reportes.js";
 import { ConocimientoComunitarioAgent } from "./agents/conocimiento-comunitario.js";
 import { SynthesizerAgent } from "./agents/synth.js";
 import { InformalService } from "./informal.js";
 import { IncidentesService } from "./incidentes.js";
+import { vigente } from "./confianza.js";
 import { minutosATexto, segAHora } from "./util.js";
 import { registrarConsulta } from "./consulta-log.js";
 import { leerReportes } from "./reporte-log.js";
 import { ingestarReporte } from "./ingesta-reportes.js";
 import { nombreModeloLlm } from "./llm.js";
 import { nombreModeloStt } from "./stt.js";
-import type { ResultadoRecomendacion } from "./types.js";
+import type { ConsultaNormalizada, ResultadoRecomendacion } from "./types.js";
 
 // Núcleo reutilizable: construye el pipeline multiagente y lo ejecuta desde
 // cualquier entrada (CLI o Telegram). Mantiene el subsistema informal vivo
@@ -34,11 +36,6 @@ export interface Recomendacion {
   geocode?: GeocodeInfo;
   csvRuta: string;
 }
-
-// Ventana de rehidratación: al arrancar se re-ingieren los reportes del CSV con
-// esta antigüedad máxima (configurable con REPORTES_TTL_HORAS). Aunque el TTL sea
-// amplio, el decaimiento temporal de C(t)/incidentes los atenúa con los días.
-const REPORTES_TTL_HORAS = Number(process.env.REPORTES_TTL_HORAS ?? 24) || 24;
 
 export class Recomendador {
   readonly informal: InformalService;
@@ -70,6 +67,7 @@ export class Recomendador {
     orch.stage(new GeocoderAgent(), new CkanAgent(), new SocrataAgent());
     orch.stage(new TransitAgent(this.incidentes));
     orch.stage(new InformalAgent(this.informal));
+    orch.stage(new CongestionAgent(this.incidentes, this.informal));
     orch.stage(new VerificacionReportesAgent(this.incidentes, this.informal));
     orch.stage(new ConocimientoComunitarioAgent());
     orch.stage(new SynthesizerAgent());
@@ -98,25 +96,25 @@ export class Recomendador {
     };
   }
 
-  // Entrada como texto libre (la vía usada por Telegram).
+  // Entrada como texto libre (la vía usada por Telegram/consola).
   async recomendarTexto(
     texto: string,
     logger: (m: string) => void = () => {},
+    consultaPrevia?: ConsultaNormalizada,
   ): Promise<Recomendacion> {
-    return this.ejecutar({ textoLibre: texto, motivos: [] }, logger);
+    return this.ejecutar({ textoLibre: texto, motivos: [], consultaPrevia }, logger);
   }
 
   // Rehidrata la base de conocimiento de reportes: lee data/reportes.csv y
   // re-ingiere los reportes recientes para que sigan afectando el enrutamiento
   // (confianza C(t) y/o incidentes) después de un reinicio.
   async rehidratar(logger: (m: string) => void = () => {}): Promise<void> {
-    const ttlMs = REPORTES_TTL_HORAS * 3_600_000;
     const ahora = Date.now();
     let reingestados = 0;
 
     for (const r of leerReportes()) {
       const ts = Date.parse(r.timestamp);
-      if (!Number.isFinite(ts) || ahora - ts > ttlMs) continue;
+      if (!Number.isFinite(ts) || !vigente(ts, ahora)) continue;
 
       await ingestarReporte(
         r.texto,
@@ -161,7 +159,7 @@ export class Recomendador {
       mejorTiempoMin: mejor?.tiempoEstimadoMin,
       mejorConfianza: mejor?.confianza,
       mejorPuntaje: mejor?.puntaje,
-      opcionesJson: JSON.stringify(resultado.opciones),
+      opcionesJson: JSON.stringify(resultado.opciones.map(({ tramos: _t, ...o }) => o)),
       datasetsJson: JSON.stringify(resultado.datasets),
       explicacion: resultado.explicacion,
       llmModelo: nombreModeloLlm(),

@@ -31,7 +31,10 @@ export class NluAgent implements Agent {
         tiempoMin: t ?? o.tiempoMin ?? d.tiempoMin ?? 30,
       };
     } else if (libre) {
-      consulta = await this.parseLibre(libre);
+      const previa = ctx.state.consultaPrevia as ConsultaNormalizada | undefined;
+      consulta = previa
+        ? await this.parseSeguimiento(libre, previa)
+        : await this.parseLibre(libre);
     } else {
       throw new FatalAgentError(
         "Sin consulta: usa --origen/--destino o un texto libre con --texto.",
@@ -81,7 +84,7 @@ export class NluAgent implements Agent {
   }
 
   private fallback(texto: string): ConsultaNormalizada {
-    const { texto: resto, tiempoMin } = extraerTiempo(texto);
+    const { texto: resto, tiempoMin } = extraerTiempo(quitarHora(texto));
     const m = resto.match(/^(?:de\s+)?(.+?)\s+a\s+(.+)$/i);
     if (m && m[1].trim() && m[2].trim()) {
       return {
@@ -94,11 +97,79 @@ export class NluAgent implements Agent {
       `No pude interpretar el texto libre: "${texto}". Usa la forma "de ORIGEN a DESTINO en N min".`,
     );
   }
+
+  private async parseSeguimiento(
+    texto: string,
+    previa: ConsultaNormalizada,
+  ): Promise<ConsultaNormalizada> {
+    if (hayLlm()) {
+      const raw = await generarTexto(
+        `Consulta previa: origen "${previa.origenTexto}", destino "${previa.destinoTexto}". ` +
+          `Mensaje nuevo del usuario (puede cambiar origen, destino y/o hora): "${texto}". ` +
+          `Devuelve SOLO JSON con claves "origen", "destino", "tiempoMin", "hora".`,
+        { system: "Eres un extractor de consultas de movilidad de seguimiento. Sé exacto.", json: true },
+      );
+      if (raw) {
+        try {
+          const j = JSON.parse(raw) as {
+            origen?: string;
+            destino?: string;
+            tiempoMin?: number;
+            hora?: string;
+          };
+          if (j.origen && j.destino) {
+            return {
+              origenTexto: j.origen,
+              destinoTexto: j.destino,
+              tiempoMin: typeof j.tiempoMin === "number" ? j.tiempoMin : previa.tiempoMin,
+              salidaSeg: horaASeg(j.hora ?? "") ?? undefined,
+            };
+          }
+        } catch {
+          // cae al fallback determinista
+        }
+      }
+    }
+
+    const sinHora = quitarHora(texto);
+    if (/\bde\s+.+\s+a\s+.+/i.test(sinHora)) return this.fallback(texto);
+
+    const { texto: resto, tiempoMin } = extraerTiempo(sinHora);
+    const origen = resto.match(
+      /\b(?:desde|salgo de|saliendo de|parto de)\s+(?:el\s+|la\s+)?(.+?)(?=\s+(?:hasta|hacia|para)\s+|$)/i,
+    )?.[1]?.trim();
+    const destino = resto.match(
+      /\b(?:hasta|hacia|para|voy a|ir a|llegar a)\s+(?:el\s+|la\s+)?(.+)$/i,
+    )?.[1]?.trim();
+
+    if (!origen && !destino && tiempoMin === null && extraerHora(texto) === null) {
+      throw new FatalAgentError(
+        `No entendí el cambio. Sigo con "${previa.origenTexto}" → "${previa.destinoTexto}"; dime qué quieres cambiar (origen, destino, hora o tiempo).`,
+      );
+    }
+
+    return {
+      origenTexto: origen ?? previa.origenTexto,
+      destinoTexto: destino ?? previa.destinoTexto,
+      tiempoMin: tiempoMin ?? previa.tiempoMin,
+      salidaSeg: previa.salidaSeg,
+    };
+  }
 }
 
 function parseTiempo(raw: string): number | null {
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function quitarHora(texto: string): string {
+  return texto
+    .replace(
+      /\b(?:a\s+las?\s+|al\s+|a\s+)?(?:\d{1,2}:\d{2}|media\s*noche|medianoche|medio\s*d[ií]a|mediod[ií]a)\b/gi,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // Extrae una hora de salida de un texto ("a las 23:30", "media noche", "mediodía").

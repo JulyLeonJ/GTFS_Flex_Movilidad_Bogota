@@ -11,7 +11,9 @@
     "demo:hibrido": "tsx src/index.ts --origen \"Quiba Bajo\" --destino \"Mochuelo Alto\" --tiempo 30",
     "gtfs:sync": "tsx src/gtfs-sync.ts",
     "flex:demo": "tsx src/flex-demo.ts",
-    "telegram": "tsx src/telegram.ts",
+    "server": "tsx src/server.ts",
+    "telegram": "tsx src/server.ts",
+    "verificar": "tsx src/verificar.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

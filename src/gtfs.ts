@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import AdmZip from "adm-zip";
+import { haversine } from "./util.js";
+import type { Coord, Punto, Subsistema } from "./types.js";
 
 // Modelo y cargador GTFS optimizado para feeds grandes (SITP real, ~5.7M filas).
 // - Filtrado espacial por bbox (para acotar la búsqueda a una localidad).
@@ -23,6 +25,8 @@ export interface GtfsRoute {
   longName: string;
   routeType: number;
   color?: string;
+  agencyId?: string;
+  subsistema?: Subsistema;
 }
 
 export interface Bbox {
@@ -52,6 +56,8 @@ export interface Gtfs {
   boardings: Map<number, number[]>; // stopIdx -> [trip, pos, ...]
   freq: Map<number, Frecuencia>; // trip -> frecuencia (si aplica)
   tripsCount: number;
+  tripShape: string[]; // trip -> shape_id ("" si no tiene)
+  shapes: Map<string, number[]>; // shape_id -> [lon0, lat0, lon1, lat1, …]
 }
 
 type Log = (msg: string) => void;
@@ -78,6 +84,61 @@ export function bboxPorDefecto(): Bbox | undefined {
 function enBbox(bbox: Bbox | undefined, lat: number, lon: number): boolean {
   if (!bbox) return true;
   return lat >= bbox.sur && lat <= bbox.norte && lon >= bbox.oeste && lon <= bbox.este;
+}
+
+// Área del MVP (Ciudad Bolívar). Es el mismo bbox que filtra el GTFS, para que
+// "lo que conoce el sistema" y "lo que se acepta en una consulta" coincidan.
+// undefined = sin restricción (GTFS_BBOX=none, solo desarrollo).
+export function areaMvp(): { nombre: string; bbox: Bbox } | undefined {
+  const bbox = bboxPorDefecto();
+  // ponytail: nombre fijo; MVP de una sola localidad.
+  return bbox ? { nombre: "Ciudad Bolívar", bbox } : undefined;
+}
+
+export function enArea(p: { lat: number; lon: number }): boolean {
+  return enBbox(bboxPorDefecto(), p.lat, p.lon);
+}
+
+function subsistemaDe(agencyName: string, routeType: number): Subsistema | undefined {
+  const n = agencyName.toLowerCase();
+  if (routeType === 6 || n.includes("cable")) return "cable";
+  if (n.includes("troncal")) return "troncal";
+  if (n.includes("alimentador")) return "alimentador";
+  if (n.includes("dual")) return "dual";
+  if (n.includes("zonal")) return "zonal";
+  return undefined;
+}
+
+// Recorta un shape entre la parada de abordaje (a) y la de bajada (b).
+// Busca el vértice más cercano a `a` y luego el más cercano a `b` SOLO hacia
+// adelante (los shapes de ida y vuelta/circulares pasan dos veces cerca de la
+// misma parada). Devuelve null si alguna parada queda a más de TOLERANCIA_SHAPE_M
+// del shape (shape y paradas no corresponden): el llamador cae a "paradas".
+const TOLERANCIA_SHAPE_M = 150;
+export function cortarShape(shape: number[], a: Punto, b: Punto): Coord[] | null {
+  const n = shape.length / 2;
+  const vertice = (i: number): Punto => ({ lat: shape[i * 2 + 1], lon: shape[i * 2] });
+
+  let ia = 0;
+  let dA = Infinity;
+  for (let i = 0; i < n; i++) {
+    const d = haversine(a, vertice(i));
+    if (d < dA) { dA = d; ia = i; }
+  }
+  if (dA > TOLERANCIA_SHAPE_M) return null;
+
+  let ib = ia;
+  let dB = Infinity;
+  for (let i = ia; i < n; i++) {
+    const d = haversine(b, vertice(i));
+    if (d < dB) { dB = d; ib = i; }
+  }
+  if (dB > TOLERANCIA_SHAPE_M || ib <= ia) return null;
+
+  const coords: Coord[] = [[a.lon, a.lat]];
+  for (let i = ia; i <= ib; i++) coords.push([shape[i * 2], shape[i * 2 + 1]]);
+  coords.push([b.lon, b.lat]);
+  return coords;
 }
 
 // ---- CSV genérico (solo archivos pequeños) ----
@@ -144,7 +205,7 @@ async function forEachLine(path: string, cb: (line: string) => void): Promise<vo
 
 interface FuenteGtfs {
   readText(name: string): string;
-  readStopTimesLines(cb: (line: string) => void): Promise<void>;
+  readLines(name: string, cb: (line: string) => void): Promise<void>;
 }
 
 // ---- Cargadores ----
@@ -157,12 +218,12 @@ export async function loadGtfsFromDir(
     const p = join(dir, f);
     return existsSync(p) ? readFileSync(p, "utf-8") : "";
   };
-  const readStopTimesLines = async (cb: (line: string) => void) => {
-    const p = join(dir, "stop_times.txt");
-    if (!existsSync(p)) throw new Error("Feed GTFS sin stop_times.txt");
+  const readLines = async (name: string, cb: (line: string) => void) => {
+    const p = join(dir, name);
+    if (!existsSync(p)) return;
     await forEachLine(p, cb);
   };
-  return buildGtfs({ readText, readStopTimesLines }, log, bbox);
+  return buildGtfs({ readText, readLines }, log, bbox);
 }
 
 export async function loadGtfsFromZip(
@@ -175,14 +236,14 @@ export async function loadGtfsFromZip(
     const entry = findEntry(zip, f);
     return entry ? entry.getData().toString("utf-8") : "";
   };
-  const readStopTimesLines = async (cb: (line: string) => void) => {
-    const entry = findEntry(zip, "stop_times.txt");
-    if (!entry) throw new Error("Feed GTFS sin stop_times.txt");
+  const readLines = async (name: string, cb: (line: string) => void) => {
+    const entry = findEntry(zip, name);
+    if (!entry) return;
     const tmp = mkdtempSync(join(tmpdir(), "gtfs-"));
-    zip.extractEntryTo(entry, tmp, false, true, false, "stop_times.txt");
-    await forEachLine(join(tmp, "stop_times.txt"), cb);
+    zip.extractEntryTo(entry, tmp, false, true, false, name);
+    await forEachLine(join(tmp, name), cb);
   };
-  return buildGtfs({ readText, readStopTimesLines }, log, bbox);
+  return buildGtfs({ readText, readLines }, log, bbox);
 }
 
 function findEntry(zip: AdmZip, filename: string) {
@@ -214,18 +275,32 @@ async function buildGtfs(
   const stopIndex = new Map<string, number>();
   stops.forEach((s, i) => stopIndex.set(s.id, i));
 
-  const routes = toRecords(parseCsv(fuente.readText("routes.txt"))).map((r) => ({
-    id: r.route_id,
-    shortName: r.route_short_name,
-    longName: r.route_long_name,
-    routeType: Number(r.route_type ?? 3),
-    color: r.route_color || undefined,
-  }));
+  const agencyNombrePorId = new Map<string, string>();
+  for (const a of toRecords(parseCsv(fuente.readText("agency.txt")))) {
+    agencyNombrePorId.set(a.agency_id, a.agency_name);
+  }
 
-  // trips: trip_id -> route_id
+  const routes = toRecords(parseCsv(fuente.readText("routes.txt"))).map((r) => {
+    const agencyId = r.agency_id || undefined;
+    const agencyName = agencyId ? agencyNombrePorId.get(agencyId) ?? "" : "";
+    const routeType = Number(r.route_type ?? 3);
+    return {
+      id: r.route_id,
+      shortName: r.route_short_name,
+      longName: r.route_long_name,
+      routeType,
+      color: r.route_color || undefined,
+      agencyId,
+      subsistema: subsistemaDe(agencyName, routeType),
+    };
+  });
+
+  // trips: trip_id -> route_id / shape_id
   const routePorTrip = new Map<string, string>();
+  const shapePorTrip = new Map<string, string>();
   for (const t of toRecords(parseCsv(fuente.readText("trips.txt")))) {
     routePorTrip.set(t.trip_id, t.route_id);
+    shapePorTrip.set(t.trip_id, t.shape_id ?? "");
   }
   if (routePorTrip.size === 0) throw new Error("Feed GTFS sin trips.txt");
 
@@ -242,12 +317,12 @@ async function buildGtfs(
   // stop_times (streaming) con índice de viajes asignado bajo demanda.
   const tripIndexById = new Map<string, number>();
   const tripRoute: string[] = [];
+  const tripShape: string[] = [];
   const freq: Map<number, Frecuencia> = new Map();
   const perTrip: number[][] = [];
-  const boardings = new Map<number, number[]>();
 
   let esCabecera = true;
-  await fuente.readStopTimesLines((line) => {
+  await fuente.readLines("stop_times.txt", (line) => {
     if (esCabecera) {
       esCabecera = false;
       return;
@@ -267,39 +342,65 @@ async function buildGtfs(
       ti = tripRoute.length;
       tripIndexById.set(tripId, ti);
       tripRoute.push(routeId);
+      tripShape.push(shapePorTrip.get(tripId) ?? "");
       const f = freqPorTripId.get(tripId);
       if (f) freq.set(ti, f);
       perTrip.push([]);
     }
 
-    const arr = timeToSec(parts[1]);
-    const dep = timeToSec(parts[2]);
-    const pos = perTrip[ti].length / 3;
-    perTrip[ti].push(si, arr, dep);
-
-    const list = boardings.get(si);
-    if (list) list.push(ti, pos);
-    else boardings.set(si, [ti, pos]);
+    perTrip[ti].push(Number(parts[4]), si, timeToSec(parts[1]), timeToSec(parts[2]));
   });
+  if (tripRoute.length === 0) throw new Error("Feed GTFS sin stop_times.txt (o bbox sin cobertura)");
 
   const nTrips = tripRoute.length;
   const tripStart: number[] = new Array(nTrips + 1);
   const seqStop: number[] = [];
   const seqArr: number[] = [];
   const seqDep: number[] = [];
+  const boardings = new Map<number, number[]>();
   for (let t = 0; t < nTrips; t++) {
     tripStart[t] = seqStop.length;
     const row = perTrip[t];
-    for (let i = 0; i < row.length; i += 3) {
-      seqStop.push(row[i]);
-      seqArr.push(row[i + 1]);
-      seqDep.push(row[i + 2]);
-    }
+    // El feed oficial no agrupa stop_times por viaje: el orden real es stop_sequence.
+    const orden = Array.from({ length: row.length / 4 }, (_, k) => k * 4).sort((a, b) => row[a] - row[b]);
+    orden.forEach((i, pos) => {
+      seqStop.push(row[i + 1]);
+      seqArr.push(row[i + 2]);
+      seqDep.push(row[i + 3]);
+      const list = boardings.get(row[i + 1]);
+      if (list) list.push(t, pos);
+      else boardings.set(row[i + 1], [t, pos]);
+    });
+    perTrip[t] = [];
   }
   tripStart[nTrips] = seqStop.length;
 
+  // shapes.txt: solo los referenciados por viajes que sobrevivieron al bbox.
+  const usados = new Set(tripShape.filter(Boolean));
+  const shapes = new Map<string, number[]>();
+  if (usados.size > 0) {
+    const tmp = new Map<string, [number, number, number][]>(); // id -> [seq, lon, lat]
+    let idx: Record<string, number> | null = null;
+    await fuente.readLines("shapes.txt", (line) => {
+      const p = line.split(",");
+      if (!idx) {
+        idx = Object.fromEntries(p.map((h, i) => [h.trim(), i]));
+        return;
+      }
+      const id = p[idx.shape_id];
+      if (!usados.has(id)) return;
+      const arr = tmp.get(id) ?? [];
+      arr.push([Number(p[idx.shape_pt_sequence]), Number(p[idx.shape_pt_lon]), Number(p[idx.shape_pt_lat])]);
+      tmp.set(id, arr);
+    });
+    for (const [id, pts] of tmp) {
+      pts.sort((a, b) => a[0] - b[0]);
+      shapes.set(id, pts.flatMap(([, lon, lat]) => [lon, lat]));
+    }
+  }
+
   log(
-    `GTFS: ${stops.length} paradas, ${routes.length} rutas, ${nTrips} viajes, ${seqStop.length} paradas-viaje` +
+    `GTFS: ${stops.length} paradas, ${routes.length} rutas, ${nTrips} viajes, ${seqStop.length} paradas-viaje, ${shapes.size} shapes` +
       (bbox ? " (bbox aplicado)" : ""),
   );
 
@@ -317,6 +418,8 @@ async function buildGtfs(
     boardings,
     freq,
     tripsCount: nTrips,
+    tripShape,
+    shapes,
   };
 }
 

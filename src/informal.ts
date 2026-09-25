@@ -6,7 +6,8 @@ import { QueryAgent } from "./agents/consulta-otp.js";
 import type { AudioInput } from "./stt.js";
 import type { Reporte } from "./confianza.js";
 import { haversine } from "./util.js";
-import type { OpcionRuta, Punto } from "./types.js";
+import { enArea } from "./gtfs.js";
+import type { Coord, OpcionRuta, Punto, TramoGeo } from "./types.js";
 
 // Servicio de transporte informal (GTFS-Flex): posee los Agentes de Tramo y su
 // confianza C(t) por decaimiento, y expone opciones de ruta informales para que
@@ -24,7 +25,14 @@ export class InformalService {
   private vecinos: Map<string, Vecino[]>;
 
   constructor(flexDir: string) {
-    const segmentos = parseFlex(flexDir);
+    const todos = parseFlex(flexDir);
+    const segmentos = todos.filter((s) => enArea(s.centroide));
+    if (segmentos.length < todos.length) {
+      const descartados = todos.filter((s) => !enArea(s.centroide));
+      console.warn(
+        `${descartados.length} segmento(s) Flex fuera del área MVP descartados: ${descartados.map((s) => s.id).join(", ")}`,
+      );
+    }
     this.vecinos = calcularVecinos(segmentos);
     this.bus = new SegmentBus();
     this.agentes = segmentos.map((s) => {
@@ -71,6 +79,10 @@ export class InformalService {
 
   c(id: string, t: number = Date.now()): number {
     return this.agentes.find((a) => a.segmento.id === id)?.c(t) ?? 0;
+  }
+
+  reportesDe(id: string, t?: number): readonly Reporte[] {
+    return this.agentes.find((a) => a.segmento.id === id)?.confianza.activos(t) ?? [];
   }
 
   consolidar(ids: string[], t: number = Date.now()) {
@@ -126,9 +138,25 @@ export class InformalService {
     const resumen = `Colectivo ${seg.nombre} (informal)`;
     if (claves.has(resumen)) return;
     claves.add(resumen);
-    const caminata = Math.round(dO + dD);
-    const recorrido = haversine(origen, destino);
-    const tiempo = caminata / 1.3 / 60 + recorrido / VELOCIDAD_MS / 60;
+    const caminataM = Math.round(dO + dD);
+    const recorridoM = haversine(origen, destino);
+    const tiempo = caminataM / 1.3 / 60 + recorridoM / VELOCIDAD_MS / 60;
+
+    const r = recorrido(seg, origen, destino);
+    const inicio: Punto = { lon: r[0][0], lat: r[0][1] };
+    const fin: Punto = { lon: r[r.length - 1][0], lat: r[r.length - 1][1] };
+    const tramos: TramoGeo[] = [];
+    const c1 = caminataTramo(origen, inicio);
+    if (c1) tramos.push(c1);
+    tramos.push({
+      modo: "informal",
+      etiqueta: `Colectivo ${seg.nombre}`,
+      coords: r,
+      geometria: seg.geometria.type === "LineString" ? "flex" : "recta",
+    });
+    const c2 = caminataTramo(fin, destino);
+    if (c2) tramos.push(c2);
+
     out.push({
       tipo: "directa",
       resumen,
@@ -141,10 +169,11 @@ export class InformalService {
       ],
       rutasUsadas: [seg.nombre],
       tiempoEstimadoMin: Math.max(1, Math.round(tiempo)),
-      caminataMts: caminata,
+      caminataMts: caminataM,
       puntaje: (1000 / (1 + tiempo)) * c,
       fuente: "informal",
       confianza: c,
+      tramos,
     });
   }
 
@@ -164,9 +193,33 @@ export class InformalService {
     if (claves.has(resumen)) return;
     claves.add(resumen);
     const c = Math.min(cA, cB);
-    const caminata = Math.round(dO + dD);
-    const recorrido = haversine(a.centroide, b.centroide) + haversine(origen, destino);
-    const tiempo = caminata / 1.3 / 60 + recorrido / VELOCIDAD_MS / 60;
+    const caminataM = Math.round(dO + dD);
+    const recorridoM = haversine(a.centroide, b.centroide) + haversine(origen, destino);
+    const tiempo = caminataM / 1.3 / 60 + recorridoM / VELOCIDAD_MS / 60;
+
+    const r1 = recorrido(a, origen, b.centroide);
+    const fin1: Punto = { lon: r1[r1.length - 1][0], lat: r1[r1.length - 1][1] };
+    const r2 = recorrido(b, fin1, destino);
+    const inicio1: Punto = { lon: r1[0][0], lat: r1[0][1] };
+    const fin2: Punto = { lon: r2[r2.length - 1][0], lat: r2[r2.length - 1][1] };
+    const tramos: TramoGeo[] = [];
+    const c1 = caminataTramo(origen, inicio1);
+    if (c1) tramos.push(c1);
+    tramos.push({
+      modo: "informal",
+      etiqueta: `Colectivo ${a.nombre}`,
+      coords: r1,
+      geometria: a.geometria.type === "LineString" ? "flex" : "recta",
+    });
+    tramos.push({
+      modo: "informal",
+      etiqueta: `Colectivo ${b.nombre}`,
+      coords: r2,
+      geometria: b.geometria.type === "LineString" ? "flex" : "recta",
+    });
+    const c2 = caminataTramo(fin2, destino);
+    if (c2) tramos.push(c2);
+
     out.push({
       tipo: "transbordo",
       resumen,
@@ -180,10 +233,11 @@ export class InformalService {
       ],
       rutasUsadas: [a.nombre, b.nombre],
       tiempoEstimadoMin: Math.max(1, Math.round(tiempo)),
-      caminataMts: caminata,
+      caminataMts: caminataM,
       puntaje: (1000 / (1 + tiempo)) * c,
       fuente: "informal",
       confianza: c,
+      tramos,
     });
   }
 
@@ -193,11 +247,47 @@ export class InformalService {
 }
 
 // ---- geometría: distancia de un punto a un segmento flex ----
-function distanciaPuntoASegmento(p: Punto, seg: SegmentoInformal): number {
+export function distanciaPuntoASegmento(p: Punto, seg: SegmentoInformal): number {
   if (seg.geometria.type === "LineString") {
     return distanciaPuntoALinea(p, seg.geometria.coordinates);
   }
   return haversine(p, seg.centroide);
+}
+
+function caminataTramo(desde: Punto, hasta: Punto): TramoGeo | null {
+  if (haversine(desde, hasta) < 10) return null;
+  return {
+    modo: "caminata",
+    etiqueta: "Caminar",
+    geometria: "recta",
+    coords: [[desde.lon, desde.lat], [hasta.lon, hasta.lat]],
+  };
+}
+
+// Recorrido informal dibujable entre `desde` y `hasta` sobre un segmento Flex:
+// corredor (LineString) → sub-línea entre los vértices más cercanos (invertida
+// si hace falta); zona (Polygon/Point) → recta por el centroide.
+function recorrido(seg: SegmentoInformal, desde: Punto, hasta: Punto): Coord[] {
+  if (seg.geometria.type !== "LineString") {
+    return [[desde.lon, desde.lat], [seg.centroide.lon, seg.centroide.lat], [hasta.lon, hasta.lat]];
+  }
+  const coords = seg.geometria.coordinates;
+  let ia = 0;
+  let dA = Infinity;
+  let ib = 0;
+  let dB = Infinity;
+  coords.forEach((v, i) => {
+    const p = { lat: v[1], lon: v[0] };
+    const da = haversine(desde, p);
+    if (da < dA) { dA = da; ia = i; }
+    const db = haversine(hasta, p);
+    if (db < dB) { dB = db; ib = i; }
+  });
+  if (Math.abs(ib - ia) < 1) return [[desde.lon, desde.lat], [hasta.lon, hasta.lat]];
+  const min = Math.min(ia, ib);
+  const max = Math.max(ia, ib);
+  const slice: Coord[] = coords.slice(min, max + 1);
+  return ia > ib ? slice.slice().reverse() : slice;
 }
 
 function distanciaPuntoALinea(p: Punto, coords: [number, number][]): number {
