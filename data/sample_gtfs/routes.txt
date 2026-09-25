@@ -1,0 +1,3 @@
+route_id,route_short_name,route_long_name,route_type,route_color
+C_1,TransmiCable,TransMiCable - Mirador del Paraiso (cable aereo),6,808000
+Z_112,Z-112,Portal Tunal - Mirador del Paraiso (zonal SITP),3,0072CE

@@ -1,0 +1,28 @@
+{
+  "name": "orquestador-movilidad-bogota",
+  "version": "0.1.0",
+  "description": "Orquestador multiagente para recomendar rutas de transporte en Bogotá cruzando datos abiertos.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsx src/index.ts",
+    "demo": "tsx src/index.ts --origen \"Portal Tunal\" --destino \"Mirador del Paraiso\" --tiempo 30",
+    "demo:hibrido": "tsx src/index.ts --origen \"Quiba Bajo\" --destino \"Mochuelo Alto\" --tiempo 30",
+    "gtfs:sync": "tsx src/gtfs-sync.ts",
+    "flex:demo": "tsx src/flex-demo.ts",
+    "telegram": "tsx src/telegram.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "grammy": "^1.46.0",
+    "openai": "^7.23.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

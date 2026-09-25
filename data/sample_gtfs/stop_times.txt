@@ -1,0 +1,10 @@
+trip_id,arrival_time,departure_time,stop_id,stop_sequence
+cable_1,06:00:00,06:00:00,cable_tunal,1
+cable_1,06:03:00,06:03:00,cable_jpablo,2
+cable_1,06:06:00,06:06:00,cable_manitas,3
+cable_1,06:09:00,06:09:00,cable_paraiso,4
+cable_1,06:12:00,06:12:00,cable_manitas,5
+cable_1,06:15:00,06:15:00,cable_jpablo,6
+cable_1,06:18:00,06:18:00,cable_tunal,7
+z112_1,06:00:00,06:00:00,tunal,1
+z112_1,06:20:00,06:20:00,mirador,2

@@ -1,0 +1,7 @@
+stop_id,stop_name,stop_lat,stop_lon
+cable_tunal,Cable Portal Tunal,4.56917,-74.13968
+cable_jpablo,Juan Pablo II,4.5557899,-74.1473999
+cable_manitas,Manitas,4.55028009,-74.15049744
+cable_paraiso,Mirador del Paraiso,4.55009985,-74.1588974
+tunal,Portal Tunal,4.56917,-74.13968
+mirador,Mirador del Paraiso (zonal),4.55009985,-74.1588974

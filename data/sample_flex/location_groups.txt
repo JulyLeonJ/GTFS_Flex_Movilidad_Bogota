@@ -1,0 +1,5 @@
+location_group_id,stop_id,location_group_name
+zona-quiba-bajo,quiba-p1,Quiba Bajo
+zona-quiba-bajo,quiba-p2,Quiba Bajo
+zona-mochuelo-alto,mochuelo-p1,Mochuelo Alto
+zona-mochuelo-alto,mochuelo-p2,Mochuelo Alto

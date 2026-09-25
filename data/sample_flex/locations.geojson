@@ -1,0 +1,69 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "corredor-quiba-mochuelo",
+      "properties": {
+        "location_type": "continuous_stop",
+        "name": "Quiba Mochuelo",
+        "c_base": 0.4,
+        "vida_media_min": 15
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-74.16842, 4.52738],
+          [-74.164, 4.517],
+          [-74.158, 4.507],
+          [-74.152, 4.497],
+          [-74.14825, 4.48863]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "zona-quiba-bajo",
+      "properties": {
+        "location_type": "location_group",
+        "name": "Quiba Bajo",
+        "c_base": 0.45,
+        "vida_media_min": 20
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-74.1694, 4.5268],
+            [-74.1674, 4.5268],
+            [-74.1674, 4.528],
+            [-74.1694, 4.528],
+            [-74.1694, 4.5268]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "zona-mochuelo-alto",
+      "properties": {
+        "location_type": "location_group",
+        "name": "Mochuelo Alto",
+        "c_base": 0.45,
+        "vida_media_min": 20
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-74.1493, 4.488],
+            [-74.1473, 4.488],
+            [-74.1473, 4.4893],
+            [-74.1493, 4.4893],
+            [-74.1493, 4.488]
+          ]
+        ]
+      }
+    }
+  ]
+}
