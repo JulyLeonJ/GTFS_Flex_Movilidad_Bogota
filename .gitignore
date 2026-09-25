@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 data/gtfs_cache/
+.codegraph/
+.claude/
