@@ -26,6 +26,7 @@ const MAX_TRANSBORDOS = 3; // máximo de transbordos (hasta 4 viajes)
 const MAX_DURACION_SEC = 4 * 3600; // poda de rutas absurdamente largas
 const MAX_ALTERNATIVAS = 5; // etiquetas por parada / rutas alternativas
 const PENALIZACION_MAX_SEG = 30 * 60; // penalización de un viaje 100% afectado
+const PENALIZACION_TRANSBORDO_MIN = 12; // costo de un transbordo expresado en minutos
 
 interface Candidata {
   stop: GtfsStop;
@@ -65,13 +66,16 @@ export class TransitAgent implements Agent {
   readonly name = "transito";
 
   private gtfs!: Gtfs;
-  private tripImpacto: number[] = []; // viaje -> impacto agregado 0..1
+  private tripImpacto: number[] = []; // viaje -> impacto agregado 0..1 (confianza)
+  private tripImpactoRuta: number[] = []; // viaje -> impacto de ruta (severidad, desvío)
+  private viajesEscaneados = new Set<number>(); // viajes alcanzados por RAPTOR en la consulta
 
   constructor(private incidentes: IncidentesService = new IncidentesService()) {}
 
   async run(ctx: AgentContext): Promise<void> {
     const consulta = ctx.state.consulta as ConsultaNormalizada;
     await this.cargar(ctx);
+    this.viajesEscaneados.clear();
     this.calcularImpactoPorViaje();
 
     const salidaSeg = consulta.salidaSeg;
@@ -97,6 +101,7 @@ export class TransitAgent implements Agent {
 
     const opciones = this.enrutar(origen, destino, salidaSeg);
     ctx.state.opciones = opciones;
+    ctx.state.incidentesEnRuta = this.motivosDeRuta();
     ctx.log(`${opciones.length} opción(es) de ruta calculadas`);
   }
 
@@ -278,25 +283,58 @@ export class TransitAgent implements Agent {
   }
 
   // Impacto de los incidentes oficiales por viaje: un viaje está afectado si
-  // alguna de sus paradas cae dentro del radio de un incidente activo.
+  // alguna de sus paradas cae dentro del radio de un incidente activo. Se
+  // calculan dos impactos: uno para el desvío (severidad, sin fiabilidad) y otro
+  // para la confianza (severidad * fiabilidad).
   private calcularImpactoPorViaje(): void {
     const n = this.gtfs.tripsCount;
     this.tripImpacto = new Array(n).fill(0);
+    this.tripImpactoRuta = new Array(n).fill(0);
     if (this.incidentes.activos().length === 0) return;
 
     const stopImpacto = new Array(this.gtfs.stops.length).fill(0);
+    const stopImpactoRuta = new Array(this.gtfs.stops.length).fill(0);
     for (let s = 0; s < this.gtfs.stops.length; s++) {
       const st = this.gtfs.stops[s];
       stopImpacto[s] = this.incidentes.impactoEn(st.lat, st.lon);
+      stopImpactoRuta[s] = this.incidentes.impactoDeRutaEn(st.lat, st.lon);
     }
     for (let t = 0; t < n; t++) {
       let m = 0;
+      let mr = 0;
       for (let p = this.gtfs.tripStart[t]; p < this.gtfs.tripStart[t + 1]; p++) {
-        const imp = stopImpacto[this.gtfs.seqStop[p]];
-        if (imp > m) m = imp;
+        const si = this.gtfs.seqStop[p];
+        if (stopImpacto[si] > m) m = stopImpacto[si];
+        if (stopImpactoRuta[si] > mr) mr = stopImpactoRuta[si];
       }
       this.tripImpacto[t] = m;
+      this.tripImpactoRuta[t] = mr;
     }
+  }
+
+  // Motivos de los incidentes que efectivamente afectaron la búsqueda de esta
+  // consulta: un incidente "afecta" si su radio cubre alguna parada de un viaje
+  // alcanzable desde el origen. Así, aunque la ruta ganadora desvíe y ya no
+  // pase por el corredor afectado, la explicación final puede atribuir la
+  // demora/desvío al reporte.
+  private motivosDeRuta(): string[] {
+    const incidentes = this.incidentes.activos();
+    if (incidentes.length === 0 || this.viajesEscaneados.size === 0) return [];
+    const motivos: string[] = [];
+    for (const inc of incidentes) {
+      let afecta = false;
+      outer: for (const t of this.viajesEscaneados) {
+        for (let p = this.gtfs.tripStart[t]; p < this.gtfs.tripStart[t + 1]; p++) {
+          const st = this.gtfs.stops[this.gtfs.seqStop[p]];
+          if (haversine({ lat: st.lat, lon: st.lon }, { lat: inc.lat, lon: inc.lon }) <= inc.radioM) {
+            afecta = true;
+            break outer;
+          }
+        }
+      }
+      if (afecta) motivos.push(inc.motivo);
+    }
+    return motivos;
   }
 
   // Escaneo de un viaje (núcleo de RAPTOR): recorre las paradas del viaje y
@@ -312,6 +350,8 @@ export class TransitAgent implements Agent {
     const len = this.gtfs.tripStart[t + 1] - base;
     const f = this.gtfs.freq.get(t);
     const routeId = this.gtfs.tripRoute[t];
+
+    this.viajesEscaneados.add(t);
 
     let bestArr = Infinity;
     let bestBoardStop = -1;
@@ -340,7 +380,7 @@ export class TransitAgent implements Agent {
       }
 
       if (bestArr === Infinity) continue;
-      const penalidad = (this.tripImpacto[t] ?? 0) * PENALIZACION_MAX_SEG;
+      const penalidad = (this.tripImpactoRuta[t] ?? 0) * PENALIZACION_MAX_SEG;
       const arr =
         (f
           ? bestArr + (this.gtfs.seqArr[base + p] - this.gtfs.seqDep[base + bestBoardPos])
@@ -443,6 +483,10 @@ export class TransitAgent implements Agent {
     const viajeMin = (arrSec - startSec) / 60;
     const caminata = Math.round(o.dist + d.dist);
     const tiempoTotal = viajeMin + caminata / WALK_SPEED_MS / 60;
+    // Tiempo efectivo: se penaliza cada transbordo en minutos (sin bonus fijo),
+    // de modo que una ruta directa muy lenta no desplace a una más rápida con
+    // un solo transbordo.
+    const tiempoEfectivo = tiempoTotal + (tramos.length - 1) * PENALIZACION_TRANSBORDO_MIN;
 
     const pasos: string[] = [`Caminar a ${o.stop.name} (~${Math.round(o.dist)} m)`];
     tramos.forEach((tr, i) => {
@@ -470,7 +514,7 @@ export class TransitAgent implements Agent {
       rutasUsadas: etiquetas,
       tiempoEstimadoMin: Math.max(1, Math.round(tiempoTotal)),
       caminataMts: caminata,
-      puntaje: 1000 / (1 + tiempoTotal) + (tipo === "directa" ? 40 : 0),
+      puntaje: (1000 / (1 + tiempoEfectivo)) * confianza,
       fuente: "oficial",
       confianza,
     });

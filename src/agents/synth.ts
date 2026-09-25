@@ -60,8 +60,15 @@ export class SynthesizerAgent implements Agent {
       mejor.confianza !== undefined && mejor.confianza < 1
         ? ` confianza ${(mejor.confianza * 100).toFixed(0)}%`
         : "";
+    // Si TODAS las rutas pasan por el mismo corredor afectado, la demora se
+    // atribuye explícitamente al reporte de vía (bloqueo/cierre/accidente/…).
+    const afectaTodas =
+      opciones.length > 0 &&
+      opciones.every((o) => o.confianza !== undefined && o.confianza < 1);
     const motivoTxt = motivos.length
-      ? ` Desvío por reporte de vía: ${motivos.join("; ")}.`
+      ? (afectaTodas
+          ? ` Todas las rutas pasan por el mismo corredor afectado; el tiempo de demora se debe a: ${motivos.join("; ")}.`
+          : ` El tiempo de demora se debe a un reporte de vía: ${motivos.join("; ")}.`)
       : "";
     const base = `Ruta recomendada: ${mejor.resumen}${fuente} (~${minutosATexto(mejor.tiempoEstimadoMin)}${conf}). ` +
       `Alternativas: ${opciones.length - 1} (oficiales e informales). ` +
@@ -72,10 +79,10 @@ export class SynthesizerAgent implements Agent {
     const texto = await generarTexto(
       `A partir de estos datos, redacta en 2-3 frases una recomendación de movilidad clara y sin ambigüedades. ` +
         `Menciona si la mejor opción es oficial (SITP/TransMilenio) o informal (colectivo veredal) y su confianza. ` +
-        `Si hay un reporte de vía (accidente o tráfico), indícalo EXPLÍCITAMENTE como motivo del desvío:\n` +
+        `Si hay un reporte de vía (bloqueo, accidente, cierre o tráfico), indica EXPLÍCITAMENTE que el tiempo estimado es mayor por ese reporte:\n` +
         `Origen: ${consulta.origenTexto}; Destino: ${consulta.destinoTexto}; Tiempo disponible: ${consulta.tiempoMin} min` +
         (consulta.salidaSeg !== undefined ? `; Hora de salida: ${segAHora(consulta.salidaSeg)}` : "") + `.\n` +
-        `Reportes de vía (motivo de desvío): ${motivos.length ? motivos.join("; ") : "ninguno"}.\n` +
+        `Reportes de vía (causa de la demora): ${motivos.length ? motivos.join("; ") : "ninguno"}.\n` +
         `Opciones (ordenadas por puntaje):\n${opciones
           .map((o, i) => {
             const c = o.confianza !== undefined ? ` confianza ${(o.confianza * 100).toFixed(0)}%` : "";

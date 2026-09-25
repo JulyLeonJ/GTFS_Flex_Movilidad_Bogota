@@ -20,9 +20,11 @@ de opciones**, donde cada opción lleva dos atributos:
 El **puntaje** de cada opción combina tiempo estimado y confianza:
 
 ```
-oficial:     puntaje = 1000/(1+tiempo) + 40 (si es directa)     · confianza = 1
-informal:    puntaje = 1000/(1+tiempo) · C(t)                   · confianza = C(t)
-comunitaria: puntaje = 1000/(1+tiempo) · 0.25                   · confianza = 0.25
+oficial:     puntaje = 1000/(1 + tiempo_efectivo) · confianza    · confianza = 1 - impacto
+informal:    puntaje = 1000/(1+tiempo) · C(t)                    · confianza = C(t)
+comunitaria: puntaje = 1000/(1+tiempo) · 0.25                    · confianza = 0.25
+
+tiempo_efectivo = tiempo + 12 min × transbordos   (penaliza transbordos, no usa bonus fijo)
 ```
 
 Así, una ruta informal rápida pero con baja confianza (p. ej. un corredor que

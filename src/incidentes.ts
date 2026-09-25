@@ -166,4 +166,21 @@ export class IncidentesService {
     }
     return Math.min(1, impacto);
   }
+
+  // Impacto para enrutamiento (desvío): severidad * decaimiento * espacial, SIN
+  // ponderar por la reputación de la fuente. Un reporte grave (bloqueo/accidente)
+  // debe desviar la ruta aunque venga de una fuente de baja fiabilidad; la
+  // fiabilidad solo modera la CONFIANZA (impactoEn), no el desvío en sí.
+  impactoDeRutaEn(lat: number, lon: number, ahora = Date.now()): number {
+    let impacto = 0;
+    for (const inc of this.incidentes) {
+      const d = haversine({ lat, lon }, { lat: inc.lat, lon: inc.lon });
+      if (d > inc.radioM) continue;
+      const edadSeg = (ahora - inc.timestamp) / 1000;
+      const decaimiento = Math.exp(-(Math.log(2) / VIDA_MEDIA_SEG) * edadSeg);
+      const espacial = 1 - d / inc.radioM;
+      impacto = Math.max(impacto, inc.severidad * decaimiento * espacial);
+    }
+    return Math.min(1, impacto);
+  }
 }

@@ -53,6 +53,15 @@ export class VerificacionReportesAgent implements Agent {
       }
     }
 
+    // Incidentes que afectaron la búsqueda de rutas (los detecta el agente de
+    // tránsito a partir de los viajes alcanzables): cubren el caso en que el
+    // corredor bloqueado no coincide con el punto medio pero aun así desvió la
+    // ruta recomendada.
+    const enRuta = ctx.state.incidentesEnRuta;
+    if (Array.isArray(enRuta)) {
+      for (const m of enRuta as string[]) agregar(m);
+    }
+
     // Transporte informal con confianza baja por reportes recientes.
     for (const o of opciones) {
       if (
