@@ -32,6 +32,7 @@ export class SynthesizerAgent implements Agent {
       opciones,
       datasets,
       explicacion,
+      motivos,
     };
     ctx.state.resultado = resultado;
     ctx.log("recomendación final consolidada");
@@ -87,10 +88,14 @@ export class SynthesizerAgent implements Agent {
           .map((o, i) => {
             const c = o.confianza !== undefined ? ` confianza ${(o.confianza * 100).toFixed(0)}%` : "";
             const f = ` [${o.fuente ?? "oficial"}]`;
-            return `${i + 1}. ${o.resumen}${f} — ${minutosATexto(o.tiempoEstimadoMin)}, caminata ${o.caminataMts} m${c}`;
+            const trancon = o.congestion && o.congestion >= 0.05 ? ` trancón ${(o.congestion * 100).toFixed(0)}%` : "";
+            return `${i + 1}. ${o.resumen}${f} — ${minutosATexto(o.tiempoEstimadoMin)}, caminata ${o.caminataMts} m${c}${trancon}`;
           })
           .join("\n")}`,
-      { system: "Eres un asesor de movilidad de Bogotá. Responde solo en español, concreto." },
+      {
+        system:
+          "Eres un asesor de movilidad de Bogotá, especializado en la localidad de Ciudad Bolívar. Responde solo en español, concreto.",
+      },
     );
     return texto ?? base;
   }

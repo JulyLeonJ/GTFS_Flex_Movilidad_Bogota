@@ -13,8 +13,15 @@ import type { Deps } from "./conversacion.js";
 // confianza C(t) en memoria) y las sesiones; por eso no pueden ser procesos
 // separados.
 
+// Frontend puede quedar en un origen distinto al backend (ej. GH Pages +
+// túnel de Cloudflare); sin este header el navegador bloquea fetch y SSE.
+const ORIGEN_PERMITIDO = process.env.FRONTEND_URL?.trim().replace(/\/+$/, "") || "*";
+
 function json(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ORIGEN_PERMITIDO,
+  });
   res.end(JSON.stringify(body));
 }
 
@@ -29,6 +36,7 @@ function sse(
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
+    "Access-Control-Allow-Origin": ORIGEN_PERMITIDO,
   });
   const enviar = (evento: string, data: unknown) =>
     res.write(`event: ${evento}\ndata: ${JSON.stringify(data)}\n\n`);
